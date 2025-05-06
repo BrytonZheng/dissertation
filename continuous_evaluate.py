@@ -17,15 +17,19 @@ writer = pd.ExcelWriter('A.xlsx')
 
 
 class ContinuousEvaluate():
-    def __init__(self, dataset_args):
+    def __init__(self, dataset_args, output_args):
         self.op = 0
-        self.drawImg = True
+        self.drawImg = output_args["draw_img"]
         self.scale = 0.3048
         self.prop = 1
         self.draw_interval = 0
         self.draw_cur_cnt = 0
         self.dataset_dir = dataset_args['dir']
         self.ori_pic_dir = dataset_args['pic_dir']
+        self.camera_params_dir = dataset_args['camera_params_dir']
+        self.draw_pic = output_args['draw_pic']
+        self.save_path = output_args['save_path']
+        self.save_pic_path = output_args['save_pic_path']
 
     def maskedMSETest(self, y_pred, y_gt, mask):
         acc = t.zeros_like(mask)
@@ -110,8 +114,6 @@ class ContinuousEvaluate():
             return lossVal, counts, loss
 
     def main(self, name, val):
-        model_step = 1
-        # args['train_flag'] = not args['use_maneuvers']
         args['train_flag'] = not val
         l_path = args['path']
         generator = model.Generator(args = args)
@@ -122,22 +124,12 @@ class ContinuousEvaluate():
         gdEncoder = gdEncoder.to(device)
         generator.eval()
         gdEncoder.eval()
-        if val:
-            if dataset == "ngsim":
-                t2 = lo.NgsimDataset(self.dataset_dir, d_s = 1, t_h = 15, t_f = 25)
-            else:
-                t2 = lo.HighdDataset('Val')
-            valDataloader = DataLoader(t2, batch_size = args['batch_size'], num_workers = args['num_worker'],
-                                       collate_fn = t2.collate_fn)
-        else:
-            if dataset == "ngsim":
-                t2 = lo.NgsimDataset(self.dataset_dir, d_s = 1, t_h = 15, t_f = 25)
-            else:
-                t2 = lo.HighdDataset('Test')
-            valDataloader = DataLoader(t2, batch_size = args['batch_size'], num_workers = args['num_worker'],
-                                       collate_fn = t2.collate_fn)
+        t2 = lo.NgsimDataset(self.dataset_dir, d_s = 1, t_h = 15, t_f = 25)
+        valDataloader = DataLoader(t2, batch_size = args['batch_size'], num_workers = args['num_worker'],
+                                   collate_fn = t2.collate_fn)
 
         print("epoch:", name, " cnt:", len(valDataloader))
+        pred = {}
         with(t.no_grad()):
             for idx, data in enumerate(tqdm(valDataloader)):
                 hist, nbrs, mask, lat_enc, lon_enc, fut, op_mask, va, nbrsva, lane, nbrslane, dis, nbrsdis, cls, nbrscls, map_positions, dsId, vehId, frameId, refPos = data
@@ -160,6 +152,15 @@ class ContinuousEvaluate():
 
                 values = gdEncoder(hist, nbrs, mask, va, nbrsva, lane, nbrslane, cls, nbrscls)
                 fut_pred, lat_pred, lon_pred = generator(values, lat_enc, lon_enc)
+                pred_to_append = fut_pred.clone()
+                for i in range(hist.size(1)):
+                    pred_to_append[:, i, 0] += float(refPos[i, 0].item())
+                    pred_to_append[:, i, 1] += float(refPos[i, 1].item())
+                    pred_to_append[:, i, [0, 1]] = -pred_to_append[:, i, [0, 1]] * self.scale
+                    if vehId[i].item() not in pred:
+                        pred[vehId[i].item()] = []
+                    pred[vehId[i].item()].append(
+                        (vehId[i].item(), frameId[i].item(), pred_to_append[:, i, :2].tolist()))
                 if not args['train_flag']:
                     indices = []
                     if args['val_use_mse']:
@@ -174,15 +175,15 @@ class ContinuousEvaluate():
                         lat_man = t.argmax(lat_enc, dim = -1).detach()
                         lon_man = t.argmax(lon_enc, dim = -1).detach()
 
-                        self.draw(hist, fut, nbrs, mask, fut_pred, args['train_flag'], lon_man, lat_man,
-                                  op_mask,
-                                  indices, dsId, vehId, va, frameId, refPos)
+                        self.to_draw(hist, fut, nbrs, mask, fut_pred, args['train_flag'], lon_man, lat_man,
+                                     op_mask, indices, dsId, vehId, va, frameId, refPos)
                 else:
                     if self.drawImg:
                         lat_man = t.argmax(lat_enc, dim = -1).detach()
                         lon_man = t.argmax(lon_enc, dim = -1).detach()
-                        self.draw(hist, fut, nbrs, mask, fut_pred, args['train_flag'], lon_man, lat_man,
-                                  op_mask, None, dsId, vehId, va, frameId, refPos)
+                        self.to_draw(hist, fut, nbrs, mask, fut_pred, args['train_flag'], lon_man, lat_man,
+                                     op_mask, None, dsId, vehId, va, frameId, refPos)
+        return pred
 
     def add_car(self, plt, x, y, alp):
         plt.gca().add_patch(plt.Rectangle(
@@ -193,13 +194,22 @@ class ContinuousEvaluate():
             alpha = alp
         ))
 
+    def to_draw(self, hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId, vehId, va,
+                frameId, refPos):
+        if self.draw_pic:
+            self.drawOriginalPNG(hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId,
+                                 vehId, va, frameId, refPos)
+        else:
+            if self.draw_cur_cnt >= self.draw_interval:
+                self.draw_cur_cnt = 0
+            else:
+                self.draw_cur_cnt += 1
+                return
+            self.draw(hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId, vehId, va,
+                      frameId, refPos)
+
     def draw(self, hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId, vehId, va,
              frameId, refPos):
-        if self.draw_cur_cnt >= self.draw_interval:
-            self.draw_cur_cnt = 0
-        else:
-            self.draw_cur_cnt += 1
-            return
         hist = hist.cpu()
         fut = fut.cpu()
         nbrs = nbrs.cpu()
@@ -252,7 +262,7 @@ class ContinuousEvaluate():
                         plt.plot(fut_pred_i[:, i, 1] * self.scale * self.prop, fut_pred_i[:, i, 0] * self.scale,
                                  color = 'green', linewidth = 0.2)
             plt.gca().set_aspect('equal', adjustable = 'box')
-            save_path = './pic_new/' + str(dsId[i].item()) + '-' + str(vehId[i].item()) + '/' + str(
+            save_path = self.save_path + str(dsId[i].item()) + '-' + str(vehId[i].item()) + '/' + str(
                 self.op) + '.png'
             os.makedirs(os.path.dirname(save_path), exist_ok = True)
             plt.savefig(save_path)
@@ -262,9 +272,8 @@ class ContinuousEvaluate():
 
     def drawOriginalPNG(self, hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId,
                         vehId, va, frameId, refPos):
-        dir = "roadsideCamera1-250409-111220/roadsideCamera1-250409-111220/output/Colorbox/"
-        camera_params = get_camera_params(
-            "roadsideCamera1-250409-111220/roadsideCamera1-250409-111220/DumpSettings.json")
+        dir = self.ori_pic_dir
+        camera_params = get_camera_params(self.camera_params_dir)
         hist = hist.cpu()
         fut = fut.cpu()
         nbrs = nbrs.cpu()
@@ -301,7 +310,6 @@ class ContinuousEvaluate():
             world_fut = []
             fut[:, i, 0] += float(refPos[i, 0].item())
             fut[:, i, 1] += float(refPos[i, 1].item())
-            print(fut[:, i, :] * self.scale * self.prop)
             for fi in range(len(fut[:, i, 1])):
                 wx, wy = float(fut[fi, i, 0].item()) * self.scale * self.prop, float(
                     fut[fi, i, 1].item()) * self.scale
@@ -314,7 +322,7 @@ class ContinuousEvaluate():
             draw.line(world_fut[:-1], fill = "yellow", width = 6)
             draw.line(world_fut_pred, fill = "red", width = 4)
 
-            save_path = './pic_original_new/' + str(dsId[i].item()) + '-' + str(vehId[i].item()) + '/' + str(
+            save_path = self.save_pic_path + str(dsId[i].item()) + '-' + str(vehId[i].item()) + '/' + str(
                 self.op) + '.png'
             os.makedirs(os.path.dirname(save_path), exist_ok = True)
             img.save(save_path)
@@ -322,10 +330,14 @@ class ContinuousEvaluate():
 
 
 if __name__ == '__main__':
-    camera_params = get_camera_params("roadsideCamera1-250409-111220/roadsideCamera1-250409-111220/DumpSettings.json")
-    data_args = {}
+    data_args, output_args = {}, {}
     data_args['dir'] = 'roadsideCamera1-250409-111220/roadsideCamera1-250409-111220/test.mat'
     data_args['pic_dir'] = 'roadsideCamera1-250409-111220/roadsideCamera1-250409-111220/output/Colorbox/'
-    evaluate = ContinuousEvaluate(data_args)
+    data_args['camera_params_dir'] = 'roadsideCamera1-250409-111220/roadsideCamera1-250409-111220/DumpSettings.json'
+    output_args['draw_img'] = True
+    output_args['draw_pic'] = True
+    output_args['save_path'] = './save2/'
+    output_args['save_pic_path'] = './save2_pic/'
+    evaluate = ContinuousEvaluate(data_args, output_args)
     evaluate.main(name = '9', val = False)
     # evaluate.main('1', False)
