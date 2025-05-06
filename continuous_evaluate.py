@@ -133,6 +133,7 @@ class ContinuousEvaluate():
                                    collate_fn = t2.collate_fn)
 
         print("epoch:", name, " cnt:", len(valDataloader))
+        pred = {}
         with(t.no_grad()):
             for idx, data in enumerate(tqdm(valDataloader)):
                 hist, nbrs, mask, lat_enc, lon_enc, fut, op_mask, va, nbrsva, lane, nbrslane, dis, nbrsdis, cls, nbrscls, map_positions, dsId, vehId, frameId, refPos = data
@@ -155,6 +156,15 @@ class ContinuousEvaluate():
 
                 values = gdEncoder(hist, nbrs, mask, va, nbrsva, lane, nbrslane, cls, nbrscls)
                 fut_pred, lat_pred, lon_pred = generator(values, lat_enc, lon_enc)
+                pred_to_append = fut_pred.clone()
+                for i in range(hist.size(1)):
+                    pred_to_append[:, i, 0] += float(refPos[i, 0].item())
+                    pred_to_append[:, i, 1] += float(refPos[i, 1].item())
+                    pred_to_append[:, i, [0, 1]] = -pred_to_append[:, i, [0, 1]] * self.scale
+                    if vehId[i].item() not in pred:
+                        pred[vehId[i].item()] = []
+                    pred[vehId[i].item()].append(
+                        (vehId[i].item(), frameId[i].item(), pred_to_append[:, i, :2].tolist()))
                 if not args['train_flag']:
                     indices = []
                     if args['val_use_mse']:
@@ -177,6 +187,7 @@ class ContinuousEvaluate():
                         lon_man = t.argmax(lon_enc, dim = -1).detach()
                         self.to_draw(hist, fut, nbrs, mask, fut_pred, args['train_flag'], lon_man, lat_man,
                                      op_mask, None, dsId, vehId, va, frameId, refPos)
+        return pred
 
     def add_car(self, plt, x, y, alp):
         plt.gca().add_patch(plt.Rectangle(
@@ -303,7 +314,7 @@ class ContinuousEvaluate():
             world_fut = []
             fut[:, i, 0] += float(refPos[i, 0].item())
             fut[:, i, 1] += float(refPos[i, 1].item())
-            print(fut[:, i, :] * self.scale * self.prop)
+            # print(fut[:, i, :] * self.scale * self.prop)
             for fi in range(len(fut[:, i, 1])):
                 wx, wy = float(fut[fi, i, 0].item()) * self.scale * self.prop, float(
                     fut[fi, i, 1].item()) * self.scale

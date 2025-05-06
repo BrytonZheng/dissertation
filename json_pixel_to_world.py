@@ -114,13 +114,13 @@ def get_camera_params(dir):
 
 def test_main():
     print("TESTING")
-    json_dir = "roadsideCamera1-250409-111220/roadsideCamera1-250409-111220/test/"
+    json_dir = "roadsideCamera1-250409-111220/roadsideCamera1-250409-111220/"
     camera_dump_dir = "DumpSettings.json"
 
     # get camera settings
     json_camera = get_camera_params(json_dir + camera_dump_dir)
 
-    px, py = 1240, 2000
+    px, py = 950, 1995
     wx, wy = pixel_to_world_ground(px, py, json_camera)
     print("Pixel to World:", px, py, "->", wx, wy)
 
@@ -343,4 +343,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    test_main()
