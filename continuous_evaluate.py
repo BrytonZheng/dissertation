@@ -114,7 +114,6 @@ class ContinuousEvaluate():
             return lossVal, counts, loss
 
     def main(self, name, val):
-        camera_params = get_camera_params(self.camera_params_dir)
         args['train_flag'] = not val
         l_path = args['path']
         generator = model.Generator(args = args)
@@ -125,10 +124,7 @@ class ContinuousEvaluate():
         gdEncoder = gdEncoder.to(device)
         generator.eval()
         gdEncoder.eval()
-        if dataset == "ngsim":
-            t2 = lo.NgsimDataset(self.dataset_dir, d_s = 1, t_h = 15, t_f = 25)
-        # else:
-        #     t2 = lo.HighdDataset('Test')
+        t2 = lo.NgsimDataset(self.dataset_dir, d_s = 1, t_h = 15, t_f = 25)
         valDataloader = DataLoader(t2, batch_size = args['batch_size'], num_workers = args['num_worker'],
                                    collate_fn = t2.collate_fn)
 
@@ -314,7 +310,6 @@ class ContinuousEvaluate():
             world_fut = []
             fut[:, i, 0] += float(refPos[i, 0].item())
             fut[:, i, 1] += float(refPos[i, 1].item())
-            # print(fut[:, i, :] * self.scale * self.prop)
             for fi in range(len(fut[:, i, 1])):
                 wx, wy = float(fut[fi, i, 0].item()) * self.scale * self.prop, float(
                     fut[fi, i, 1].item()) * self.scale
