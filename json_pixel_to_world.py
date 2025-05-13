@@ -5,6 +5,8 @@ import json
 import matplotlib.pyplot as plt
 from scipy.io import savemat
 
+CONST_MAT_NAME = "data.mat"
+
 
 def pixel_to_world_ground(px, py, camera_params):
     """
@@ -120,7 +122,7 @@ def test_main():
     # get camera settings
     json_camera = get_camera_params(json_dir + camera_dump_dir)
 
-    px, py = 950, 1995
+    px, py = 500, 500
     wx, wy = pixel_to_world_ground(px, py, json_camera)
     print("Pixel to World:", px, py, "->", wx, wy)
 
@@ -129,8 +131,8 @@ def test_main():
     print("World to Pixel:", wxx, wyy, "->", pxx, pyy)
 
 
-def main():
-    json_dir = "roadsideCamera1-250409-111220/roadsideCamera1-250409-111220/"
+def main(json_dir = "roadsideCamera1-250409-111220/roadsideCamera1-250409-111220"):
+    # json_dir = "roadsideCamera1-250409-111220/roadsideCamera1-250409-111220"
     camera_dump_dir = "DumpSettings.json"
     frame_file = "CameraInfo.json"
     frame_rate = 5
@@ -146,7 +148,7 @@ def main():
     scale = 0.3048
 
     # get camera settings
-    json_camera = get_camera_params(json_dir + camera_dump_dir)
+    json_camera = get_camera_params(os.path.join(json_dir, camera_dump_dir))
 
     # get traj
     traj_data = {}
@@ -156,7 +158,7 @@ def main():
     for subfolder in sorted([f for f in os.listdir(json_dir) if f.isdigit()], key = int):
         # get frame json
         sf = str(subfolder)
-        path = json_dir + sf + "/" + frame_file
+        path = os.path.join(json_dir, sf, frame_file)
 
         if os.path.isfile(path):
             with open(path, "r") as jf:
@@ -332,7 +334,8 @@ def main():
         mat_track[vehicle_id - 1][1], mat_track[vehicle_id - 1][2] = (
             np.array(mat_track[vehicle_id - 1][2]) / scale, np.array(mat_track[vehicle_id - 1][1]) / scale)
 
-    savemat(json_dir + "test.mat", {"traj": mat_traj, "tracks": mat_track})
+    mat_dir = os.path.join(json_dir, CONST_MAT_NAME)
+    savemat(mat_dir, {"traj": mat_traj, "tracks": mat_track})
     # xx = np.array(traj_data[2][3])
     # yy = np.array(traj_data[2][4])
     # for i in range(3):
@@ -340,6 +343,7 @@ def main():
     # plt.gca().set_aspect('equal', adjustable = 'box')
     #
     # plt.show()
+    # return mat_dir
 
 
 if __name__ == "__main__":
