@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+import glob
 import hashlib
 from turtledemo.penrose import start
 
@@ -39,6 +40,7 @@ class ContinuousEvaluate():
         self.gdEncoder = None
         self.generator = None
         self.current_epoch = -1
+        self.clear_img()
 
     def main(self, name, val):
         args['train_flag'] = not val
@@ -65,7 +67,6 @@ class ContinuousEvaluate():
                 if not ok:
                     ok = True
                     start_time = time.time()
-                    print("start")
                 hist, nbrs, mask, lat_enc, lon_enc, fut, op_mask, va, nbrsva, lane, nbrslane, dis, nbrsdis, cls, nbrscls, map_positions, dsId, vehId, frameId, refPos = data
                 fut_pred = self.batch_predict(data)
                 pred_to_append = fut_pred.clone()
@@ -101,7 +102,7 @@ class ContinuousEvaluate():
 
         values = self.gdEncoder(hist, nbrs, mask, va, nbrsva, lane, nbrslane, cls, nbrscls)
         fut_pred, lat_pred, lon_pred = self.generator(values, lat_enc, lon_enc)
-        # fut_pred = self.fut_process(fut_pred, va, refPos, hist.size(1))
+        fut_pred = self.fut_process(fut, fut_pred, va, refPos, hist.size(1))
         if not args['train_flag']:
             indices = []
             if args['val_use_mse']:
@@ -126,29 +127,37 @@ class ContinuousEvaluate():
                              op_mask, None, dsId, vehId, va, frameId, refPos)
         return fut_pred
 
-    def fut_process(self, fut_pred, va, refPos, length):
-        camera_params = get_camera_params(self.camera_params_dir)
+    def fut_process(self, fut, fut_pred, va, refPos, length):
         for i in range(length):
-            if va[:, i, 0][-1] < 30:
+            if va[:, i, 0][-1] < 13:
                 x = float(va[:, i, 0][-1]) + 0.001
-                y = x ** 0.5 * np.exp(-60 / x) + 0.05
-                fut_pred = fut_pred * y
+                y = x ** 0.5 * np.exp(-20 / x) + 0.05
+                fut_pred[:, i, :] = fut_pred[:, i, :] * y
 
-        #     # 越界判断
-        #     offset_x, offset_y = float(refPos[i, 0].item()), float(refPos[i, 1].item())
-        #     for fi in range(len(fut_pred[:, i, 1])):
-        #         wx, wy = ((float(fut_pred[fi, i, 0].item()) + offset_x) * self.scale * self.prop,
-        #                   (float(fut_pred[fi, i, 1].item()) + offset_y) * self.scale)
-        #         px, py = world_ground_to_pixel(-wx, -wy, camera_params)
-        #         if not (camera_params['width'] > px > 0 and
-        #                 camera_params['height'] > py > camera_params['height'] / 2):
-        #             fut_pred = fut_pred[:fi, :, :]
-        #             break
+            # 越界判断
+            # camera_params = get_camera_params(self.camera_params_dir)
+            # offset_x, offset_y = float(refPos[i, 0].item()), float(refPos[i, 1].item())
+            # for fi in range(len(fut_pred[:, i, 1])):
+            #     wx, wy = ((float(fut_pred[fi, i, 0].item()) + offset_x) * self.scale * self.prop,
+            #               (float(fut_pred[fi, i, 1].item()) + offset_y) * self.scale)
+            #     px, py = world_ground_to_pixel(-wx, -wy, camera_params)
+            #     if not (camera_params['width'] > px > 0 and
+            #             camera_params['height'] > py > camera_params['height'] / 2):
+            #         fut_pred[:, i, :] = fut_pred[:fi, i, :]
+            #         break
         # print(fut_pred)
         return fut_pred
 
+    def clear_img(self):
+        if self.draw_img and self.draw_all_pic:
+            clear_path = self.save_pic_path
+            png_files = glob.glob(os.path.join(clear_path, '*.png'))
+            for file_path in png_files:
+                os.remove(file_path)
+
     def to_draw(self, hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId, vehId, va,
                 frameId, refPos):
+
         if self.draw_pic:
             self.drawOriginalPNG(hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId,
                                  vehId, va, frameId, refPos)
@@ -198,6 +207,9 @@ class ContinuousEvaluate():
             plt.plot(hist[:, i, 1] * self.scale * self.prop, hist[:, i, 0] * self.scale, ':', color = 'red',
                      linewidth = 0.5)
             # self.add_car(plt, hist[-1, i, 1], hist[-1, i, 0], alp=1)
+            for j in range(1, fut[:, i, :].size(0)):
+                if torch.allclose(fut[j, i, :2], torch.tensor([0, 0], dtype = torch.float)):
+                    fut[j, i, :] = fut[j - 1, i, :]
             plt.plot(fut[:, i, 1] * self.scale * self.prop, fut[:, i, 0] * self.scale, '-', color = 'black',
                      linewidth = 0.5)
             if train_flag:
@@ -216,7 +228,6 @@ class ContinuousEvaluate():
             plt.gca().set_aspect('equal', adjustable = 'box')
             save_path = os.path.join(self.save_path, str(dsId[i].item()) + '-' + str(vehId[i].item()),
                                      str(self.op) + '.png')
-            print(save_path)
             os.makedirs(os.path.dirname(save_path), exist_ok = True)
             plt.savefig(save_path)
             self.op += 1
@@ -229,19 +240,13 @@ class ContinuousEvaluate():
         camera_params = get_camera_params(self.camera_params_dir)
         hist = hist.cpu()
         fut = fut.cpu()
-        nbrs = nbrs.cpu()
-        mask = mask.cpu()
-        op_mask = op_mask.cpu()
-        IPL = 0
         start = 12
         for i in range(hist.size(1)):
             fid = frameId[i]
-            # print("frameID:", fid)
 
             img = Image.open(os.path.join(dir, "Colorbox%d.png" % (start + fid * 12)))
             draw = ImageDraw.Draw(img)
             fut_pred = fut_pred.detach().cpu()
-            print(fut_pred[:, i, :2].tolist(), '\n', refPos[i, :])
             world_fut_pred = []
             fut_pred[:, i, 0] += float(refPos[i, 0].item())
             fut_pred[:, i, 1] += float(refPos[i, 1].item())
@@ -275,7 +280,6 @@ class ContinuousEvaluate():
 
             save_path = os.path.join(self.save_pic_path, str(dsId[i].item()) + '-' + str(vehId[i].item()),
                                      str(self.op) + '.png')
-            print(save_path)
             os.makedirs(os.path.dirname(save_path), exist_ok = True)
             img.save(save_path)
             self.op += 1
@@ -310,6 +314,7 @@ class ContinuousEvaluate():
         for i in range(hist.size(1)):
             fid = frameId[i].item()
             fname = f"{fid}.png"
+            # self.op += 1
             fpath = os.path.join(dir, fname)
 
             # 如果图片存在则打开，否则创建新图
@@ -324,19 +329,24 @@ class ContinuousEvaluate():
             color = self.id_to_color(vehId[i].item())
 
             # 生成预测轨迹像素坐标
-            traj = []
+            world_fut_pred = []
             fut_pred[:, i, 0] += float(refPos[i, 0].item())
             fut_pred[:, i, 1] += float(refPos[i, 1].item())
-            for fi in range(fut_pred.size(0)):
-                wx = float(fut_pred[fi, i, 0].item()) * self.scale * self.prop
-                wy = float(fut_pred[fi, i, 1].item()) * self.scale
+            first_overflow = False
+            for fi in range(len(fut_pred[:, i, 1])):
+                wx, wy = float(fut_pred[fi, i, 0].item()) * self.scale * self.prop, float(
+                    fut_pred[fi, i, 1].item()) * self.scale
                 px, py = world_ground_to_pixel(-wx, -wy, camera_params)
-                if 0 < px < img.size[0] and img.size[1] / 2 < py < img.size[1]:
-                    traj.append((float(px), float(py)))
-
+                if img.size[0] > px > 0 and img.size[1] > py > 0:
+                    if py < img.size[1] / 2:
+                        if not first_overflow:
+                            world_fut_pred.append((img.size[0] - float(px), img.size[1] - 1))
+                            first_overflow = True
+                    else:
+                        world_fut_pred.append((float(px), float(py)))
             # 绘制预测轨迹
-            if len(traj) > 1:
-                draw.line(traj, fill = color, width = 4)
+            if len(world_fut_pred) > 1:
+                draw.line(world_fut_pred, fill = color, width = 4)
 
             # 保存图片
             os.makedirs(os.path.dirname(fpath), exist_ok = True)
@@ -353,7 +363,7 @@ if __name__ == '__main__':
     # data_args['camera_params_dir'] = 'roadsideCamera1-250409-111220/roadsideCamera1-250409-111220/DumpSettings.json'
 
     output_args['draw_img'] = True
-    output_args['draw_pic'] = True
+    output_args['draw_pic'] = False
     output_args['draw_all_pic'] = False
     output_args['save_path'] = './save1/'
     output_args['save_pic_path'] = './save1_pic/'

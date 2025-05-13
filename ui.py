@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QLineEdit, QMessageBox, QCheckBox, QTextEdit, QPlainTextEdit
 )
 from PyQt6.QtGui import QPixmap, QMouseEvent, QPainter, QPen, QColor, QTextCharFormat
-from PyQt6.QtCore import Qt, QPointF, pyqtSignal, QUrl
+from PyQt6.QtCore import Qt, QPointF, pyqtSignal, QUrl, QThread
 
 import json_pixel_to_world
 from collision_detect import CollisionDetect
@@ -182,8 +182,26 @@ class ClickableVideoWidget(QVideoWidget):
         super().mousePressEvent(event)
 
 
+class DetectWorker(QThread):
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, detect_func, polygon_points):
+        super().__init__()
+        self.detect_func = detect_func
+        self.polygon_points = polygon_points
+
+    def run(self):
+        try:
+            self.detect_func(self.polygon_points)
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            self.finished.emit()
+
+
 class MainWindow(QWidget):
-    # TODO list: 多车合并输出图片，支持选择车辆图片输出视频，支持预测轨迹碰撞颜色变化
+    # TODO list: 多车合并输出图片，支持选择车辆图片输出视频，支持预测轨迹碰撞颜色变化，提供yaw角变化ui
     def __init__(self):
         super().__init__()
         self.setWindowTitle("道路施工场景下轨迹预测系统")
@@ -194,6 +212,10 @@ class MainWindow(QWidget):
         self.logger = QTextEditLogger(self.log_output)
         sys.stdout = self.logger
         sys.stderr = self.logger
+
+        # 参数
+        self.img_width = 450
+        self.img_height = 375
 
         # 初始化输入框
         self.data_path_input = QLineEdit()
@@ -211,7 +233,7 @@ class MainWindow(QWidget):
         # 用于展示图片的 QLabel
         self.image_label = ClickableImageLabel("图像预览", self.logger)
         self.image_label.pointClicked.connect(self.show_coord)
-        self.image_label.setFixedSize(450, 375)
+        self.image_label.setFixedSize(self.img_width, self.img_height)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.hoverMoved.connect(self.show_hover_coord)
         self.image_label.warningMessage.connect(self.show_warning)
@@ -219,7 +241,7 @@ class MainWindow(QWidget):
 
         # 视频播放
         self.video_widget = ClickableVideoWidget()
-        self.video_widget.setFixedSize(450, 375)
+        self.video_widget.setFixedSize(self.img_width, self.img_height)
         self.media_player = QMediaPlayer()
         self.media_player.setVideoOutput(self.video_widget)
         self.audio_output = QAudioOutput()
@@ -352,7 +374,10 @@ class MainWindow(QWidget):
 
     def show_hover_coord(self, point):
         x, y = point
-        self.coord_label.setText(f"悬停坐标：({x:.1f}, {y:.1f})")
+        if y > self.img_height / self.image_label._scale_ratio_y / 2:
+            self.coord_label.setText(f"悬停坐标：({x:.1f}, {y:.1f})")
+        else:
+            self.coord_label.setText(f"位于图像上半部分，不可选点")
 
     def show_warning(self, message):
         self.coord_label.setText(message)
@@ -427,6 +452,12 @@ class MainWindow(QWidget):
             }
 
             detect = CollisionDetect(args)
+
+            # self.worker = DetectWorker(detect.detect, self.image_label.original_points)
+            # self.worker.error.connect(lambda e: QMessageBox.critical(self, "错误", e))
+            # self.worker.finished.connect(lambda: self.logger.info("✅ 检测完成"))
+            # self.worker.start()
+
             detect.detect(self.image_label.original_points)
 
             # 放视频

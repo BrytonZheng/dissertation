@@ -8,7 +8,7 @@ from scipy.io import savemat
 CONST_MAT_NAME = "data.mat"
 
 
-def pixel_to_world_ground(px, py, camera_params):
+def pixel_to_world_ground(px, py, camera_params, yaw_adj = 0.0):
     """
     将像素坐标转换为世界坐标系中的地面交点，满足：
     - 越靠近主点(cx,cy)，交点距离越远
@@ -49,14 +49,14 @@ def pixel_to_world_ground(px, py, camera_params):
     ground_point[2] = 0  # 强制 z=0
 
     # 使用相机 yaw 角来对齐世界坐标系
-    yaw = camera_params["rot"][2] + 0.03  # 单位是度
+    yaw = camera_params["rot"][2] + yaw_adj  # 单位是度
 
     # 对 ground_point[:2] 进行反向旋转
     aligned_point = rotate_point_around_z(ground_point[:2], -yaw)
     return aligned_point
 
 
-def world_ground_to_pixel(xw_aligned, yw_aligned, camera_params):
+def world_ground_to_pixel(xw_aligned, yw_aligned, camera_params, yaw_adj = 0.0):
     """
     从“以相机朝向为准的对齐世界坐标系”中恢复像素坐标
     """
@@ -66,7 +66,7 @@ def world_ground_to_pixel(xw_aligned, yw_aligned, camera_params):
     rot = camera_params["rot"]
 
     # 将对齐后的坐标，正向旋转回去，得到原始世界坐标
-    yaw = rot[2] + 0.03
+    yaw = rot[2] + yaw_adj
     xw, yw = rotate_point_around_z((xw_aligned, yw_aligned), yaw)
 
     # 后续逻辑和原来一样
