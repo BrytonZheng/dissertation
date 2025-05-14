@@ -186,14 +186,13 @@ class DetectWorker(QThread):
     finished = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self, detect_func, polygon_points):
+    def __init__(self, func):
         super().__init__()
-        self.detect_func = detect_func
-        self.polygon_points = polygon_points
+        self.func = func
 
     def run(self):
         try:
-            self.detect_func(self.polygon_points)
+            self.func()
         except Exception as e:
             self.error.emit(str(e))
         finally:
@@ -201,7 +200,7 @@ class DetectWorker(QThread):
 
 
 class MainWindow(QWidget):
-    # TODO list: 多车合并输出图片，支持选择车辆图片输出视频，支持预测轨迹碰撞颜色变化，提供yaw角变化ui
+    # TODO list: 多车合并输出图片，支持选择车辆图片输出视频，支持预测轨迹碰撞颜色变化，提供yaw角变化ui，子线程锁定ui
     def __init__(self):
         super().__init__()
         self.setWindowTitle("道路施工场景下轨迹预测系统")
@@ -453,21 +452,25 @@ class MainWindow(QWidget):
 
             detect = CollisionDetect(args)
 
-            # self.worker = DetectWorker(detect.detect, self.image_label.original_points)
-            # self.worker.error.connect(lambda e: QMessageBox.critical(self, "错误", e))
-            # self.worker.finished.connect(lambda: self.logger.info("✅ 检测完成"))
-            # self.worker.start()
+            def pred_video():
+                detect.detect(self.image_label.original_points)
+                if self.draw_img_checkbox.isChecked():
+                    save_path = self.save_pic_path_input.text() if self.draw_pic_checkbox.isChecked() else self.save_path_input.text()
+                    self.generate_video_with_polygon(
+                        image_dir = os.path.join(save_path, "1-1"),
+                        points = self.image_label.get_original_points(),
+                        output_video_path = os.path.join(save_path, "output.mp4")
+                    )
 
-            detect.detect(self.image_label.original_points)
+            self.worker = DetectWorker(pred_video)
+            self.worker.error.connect(lambda e: QMessageBox.critical(self, "错误", e))
+            self.worker.finished.connect(lambda: self.logger.info("✅ 检测完成"))
+            self.worker.start()
+
+            # detect.detect(self.image_label.original_points)
 
             # 放视频
-            if self.draw_img_checkbox.isChecked():
-                save_path = self.save_pic_path_input.text() if self.draw_pic_checkbox.isChecked() else self.save_path_input.text()
-                self.generate_video_with_polygon(
-                    image_dir = os.path.join(save_path, "1-1"),
-                    points = self.image_label.get_original_points(),
-                    output_video_path = os.path.join(save_path, "output.mp4")
-                )
+
         except Exception as e:
             QMessageBox.critical(self, "错误", str(e))
 

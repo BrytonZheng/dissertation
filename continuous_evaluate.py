@@ -2,21 +2,15 @@ from __future__ import print_function
 
 import glob
 import hashlib
-from turtledemo.penrose import start
 
 import torch
-from torch.onnx.symbolic_opset9 import tensor
-
-import time
-import numpy as np
-from tqdm import tqdm
-import loader2 as lo
-from torch.utils.data import DataLoader
-import pandas as pd
-from config import *
-import matplotlib.pyplot as plt
-import os
 from PIL import Image, ImageDraw
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+
+import loader2 as lo
+import time
+from config import *
 from json_pixel_to_world import *
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
@@ -69,6 +63,8 @@ class ContinuousEvaluate():
                     start_time = time.time()
                 hist, nbrs, mask, lat_enc, lon_enc, fut, op_mask, va, nbrsva, lane, nbrslane, dis, nbrsdis, cls, nbrscls, map_positions, dsId, vehId, frameId, refPos = data
                 fut_pred = self.batch_predict(data)
+
+                # 返回结果构造
                 pred_to_append = fut_pred.clone()
                 for i in range(hist.size(1)):
                     pred_to_append[:, i, 0] += float(refPos[i, 0].item())
@@ -76,8 +72,11 @@ class ContinuousEvaluate():
                     pred_to_append[:, i, [0, 1]] = -pred_to_append[:, i, [0, 1]] * self.scale
                     if vehId[i].item() not in pred:
                         pred[vehId[i].item()] = []
-                    pred[vehId[i].item()].append(
-                        (vehId[i].item(), frameId[i].item(), pred_to_append[:, i, :2].tolist()))
+                    pred[vehId[i].item()].append((
+                        vehId[i].item(),
+                        frameId[i].item(),
+                        pred_to_append[:, i, :2].tolist(),
+                    ))
         print(time.time() - start_time, " seconds", time.time() - begin, " seconds")
         return pred
 
@@ -159,31 +158,26 @@ class ContinuousEvaluate():
                 frameId, refPos):
 
         if self.draw_pic:
-            self.drawOriginalPNG(hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId,
-                                 vehId, va, frameId, refPos)
+            # self.drawOriginalPNG(fut, fut_pred, dsId, vehId, frameId, refPos)
+            pass
         elif self.draw_all_pic:
-            self.draw_all(hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId,
-                          vehId, va, frameId, refPos)
+            self.draw_all(fut_pred, vehId, frameId, refPos)
+            pass
         else:
             if self.draw_cur_cnt >= self.draw_interval:
                 self.draw_cur_cnt = 0
             else:
                 self.draw_cur_cnt += 1
                 return
-            self.draw(hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId, vehId, va,
-                      frameId, refPos)
+            self.draw(hist, fut, nbrs, mask, fut_pred, train_flag, indices, dsId, vehId)
 
-    def draw(self, hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId, vehId, va,
-             frameId, refPos):
+    def draw(self, hist, fut, nbrs, mask, fut_pred, train_flag, indices, dsId, vehId):
         hist = hist.cpu()
         fut = fut.cpu()
         nbrs = nbrs.cpu()
         mask = mask.cpu()
-        op_mask = op_mask.cpu()
         IPL = 0
         for i in range(hist.size(1)):  # 列循环
-            lon_man_i = lon_man[i].item()
-            lat_man_i = lat_man[i].item()
 
             plt.figure(dpi = 300)
             plt.autoscale(enable = False)
@@ -234,14 +228,12 @@ class ContinuousEvaluate():
             # fig.clf()
             plt.close()
 
-    def drawOriginalPNG(self, hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId,
-                        vehId, va, frameId, refPos):
+    def drawOriginalPNG(self, fut, fut_pred, dsId, vehId, frameId, refPos):
         dir = self.ori_pic_dir
         camera_params = get_camera_params(self.camera_params_dir)
-        hist = hist.cpu()
         fut = fut.cpu()
         start = 12
-        for i in range(hist.size(1)):
+        for i in range(fut_pred.size(1)):
             fid = frameId[i]
 
             img = Image.open(os.path.join(dir, "Colorbox%d.png" % (start + fid * 12)))
@@ -272,6 +264,7 @@ class ContinuousEvaluate():
                 px, py = world_ground_to_pixel(-wx, -wy, camera_params)
                 if img.size[0] > px > 0 and img.size[1] > py > img.size[1] / 2:
                     world_fut.append((float(px), float(py)))
+
             # particular process for future track
             while len(world_fut) >= 2 and world_fut[-2] == world_fut[-1]:
                 world_fut = world_fut[:-1]
@@ -291,27 +284,25 @@ class ContinuousEvaluate():
         b = int(hash[4:6], 16)
         return (r, g, b)
 
-    def get_image_size_from_ori_dir(self, ori_pic_dir):
+    def get_image_size_from_ori_dir(self):
         """读取 ori_pic_dir 下任意一张图片来确定图像尺寸"""
-        for fname in os.listdir(ori_pic_dir):
+        for fname in os.listdir(self.ori_pic_dir):
             if fname.lower().endswith((".png", ".jpg", ".jpeg")):
-                with Image.open(os.path.join(ori_pic_dir, fname)) as img:
+                with Image.open(os.path.join(self.ori_pic_dir, fname)) as img:
                     return img.size
         raise RuntimeError("No valid images found in ori_pic_dir.")
 
-    def draw_all(self, hist, fut, nbrs, mask, fut_pred, train_flag, lon_man, lat_man, op_mask, indices, dsId,
-                 vehId, va, frameId, refPos):
+    def draw_all(self, fut_pred, vehId, frameId, refPos):
         dir = self.save_pic_path
         camera_params = get_camera_params(self.camera_params_dir)
 
         # 获取原始图尺寸（仅一次）
-        image_size = self.get_image_size_from_ori_dir(self.ori_pic_dir)
+        image_size = self.get_image_size_from_ori_dir()
 
-        hist = hist.cpu()
         fut_pred = fut_pred.detach().cpu()
         refPos = refPos.cpu()
 
-        for i in range(hist.size(1)):
+        for i in range(fut_pred.size(1)):
             fid = frameId[i].item()
             fname = f"{fid}.png"
             # self.op += 1
