@@ -5,8 +5,10 @@ import json
 import matplotlib.pyplot as plt
 from scipy.io import savemat
 
+CONST_MAT_NAME = "data.mat"
 
-def pixel_to_world_ground(px, py, camera_params):
+
+def pixel_to_world_ground(px, py, camera_params, yaw_adj = 0.0):
     """
     将像素坐标转换为世界坐标系中的地面交点，满足：
     - 越靠近主点(cx,cy)，交点距离越远
@@ -47,14 +49,14 @@ def pixel_to_world_ground(px, py, camera_params):
     ground_point[2] = 0  # 强制 z=0
 
     # 使用相机 yaw 角来对齐世界坐标系
-    yaw = camera_params["rot"][2] + 0.03  # 单位是度
+    yaw = camera_params["rot"][2] + yaw_adj  # 单位是度
 
     # 对 ground_point[:2] 进行反向旋转
     aligned_point = rotate_point_around_z(ground_point[:2], -yaw)
     return aligned_point
 
 
-def world_ground_to_pixel(xw_aligned, yw_aligned, camera_params):
+def world_ground_to_pixel(xw_aligned, yw_aligned, camera_params, yaw_adj = 0.0):
     """
     从“以相机朝向为准的对齐世界坐标系”中恢复像素坐标
     """
@@ -64,7 +66,7 @@ def world_ground_to_pixel(xw_aligned, yw_aligned, camera_params):
     rot = camera_params["rot"]
 
     # 将对齐后的坐标，正向旋转回去，得到原始世界坐标
-    yaw = rot[2] + 0.03
+    yaw = rot[2] + yaw_adj
     xw, yw = rotate_point_around_z((xw_aligned, yw_aligned), yaw)
 
     # 后续逻辑和原来一样
@@ -120,7 +122,7 @@ def test_main():
     # get camera settings
     json_camera = get_camera_params(json_dir + camera_dump_dir)
 
-    px, py = 950, 1995
+    px, py = 500, 500
     wx, wy = pixel_to_world_ground(px, py, json_camera)
     print("Pixel to World:", px, py, "->", wx, wy)
 
@@ -129,8 +131,8 @@ def test_main():
     print("World to Pixel:", wxx, wyy, "->", pxx, pyy)
 
 
-def main():
-    json_dir = "roadsideCamera1-250409-111220/roadsideCamera1-250409-111220/"
+def main(json_dir = "roadsideCamera1-250409-111220/roadsideCamera1-250409-111220"):
+    # json_dir = "roadsideCamera1-250409-111220/roadsideCamera1-250409-111220"
     camera_dump_dir = "DumpSettings.json"
     frame_file = "CameraInfo.json"
     frame_rate = 5
@@ -146,7 +148,7 @@ def main():
     scale = 0.3048
 
     # get camera settings
-    json_camera = get_camera_params(json_dir + camera_dump_dir)
+    json_camera = get_camera_params(os.path.join(json_dir, camera_dump_dir))
 
     # get traj
     traj_data = {}
@@ -156,7 +158,7 @@ def main():
     for subfolder in sorted([f for f in os.listdir(json_dir) if f.isdigit()], key = int):
         # get frame json
         sf = str(subfolder)
-        path = json_dir + sf + "/" + frame_file
+        path = os.path.join(json_dir, sf, frame_file)
 
         if os.path.isfile(path):
             with open(path, "r") as jf:
@@ -332,7 +334,9 @@ def main():
         mat_track[vehicle_id - 1][1], mat_track[vehicle_id - 1][2] = (
             np.array(mat_track[vehicle_id - 1][2]) / scale, np.array(mat_track[vehicle_id - 1][1]) / scale)
 
-    savemat(json_dir + "test.mat", {"traj": mat_traj, "tracks": mat_track})
+    mat_dir = os.path.join(json_dir, CONST_MAT_NAME)
+    # os.remove(mat_dir)
+    savemat(mat_dir, {"traj": mat_traj, "tracks": mat_track})
     # xx = np.array(traj_data[2][3])
     # yy = np.array(traj_data[2][4])
     # for i in range(3):
@@ -340,6 +344,7 @@ def main():
     # plt.gca().set_aspect('equal', adjustable = 'box')
     #
     # plt.show()
+    # return mat_dir
 
 
 if __name__ == "__main__":

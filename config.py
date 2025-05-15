@@ -18,7 +18,7 @@ device = t.device("cuda:0" if t.cuda.is_available() else "cpu")
 learning_rate = 0.0005
 dataset = "ngsim"  # highd ngsim
 
-args['num_worker'] = 8
+args['num_worker'] = 0
 args['device'] = device
 args['lstm_encoder_size'] = 64
 args['n_head'] = 4
