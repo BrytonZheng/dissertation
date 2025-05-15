@@ -70,12 +70,17 @@ class ContinuousEvaluate():
                     pred_to_append[:, i, 0] += float(refPos[i, 0].item())
                     pred_to_append[:, i, 1] += float(refPos[i, 1].item())
                     pred_to_append[:, i, [0, 1]] = -pred_to_append[:, i, [0, 1]] * self.scale
+                    fut[:, i, 0] += float(refPos[i, 0].item())
+                    fut[:, i, 1] += float(refPos[i, 1].item())
+                    fut[:, i, [0, 1]] = -fut[:, i, [0, 1]] * self.scale
+
                     if vehId[i].item() not in pred:
                         pred[vehId[i].item()] = []
                     pred[vehId[i].item()].append((
                         vehId[i].item(),
                         frameId[i].item(),
                         pred_to_append[:, i, :2].tolist(),
+                        fut[:, i, :2].tolist(),
                     ))
         print(time.time() - start_time, " seconds", time.time() - begin, " seconds")
         return pred
@@ -161,7 +166,7 @@ class ContinuousEvaluate():
             # self.drawOriginalPNG(fut, fut_pred, dsId, vehId, frameId, refPos)
             pass
         elif self.draw_all_pic:
-            self.draw_all(fut_pred, vehId, frameId, refPos)
+            # self.draw_all(fut_pred, vehId, frameId, refPos)
             pass
         else:
             if self.draw_cur_cnt >= self.draw_interval:
@@ -279,10 +284,14 @@ class ContinuousEvaluate():
 
     def id_to_color(self, id):
         hash = hashlib.md5(str(id).encode()).hexdigest()
-        r = int(hash[:2], 16)
-        g = int(hash[2:4], 16)
-        b = int(hash[4:6], 16)
-        return (r, g, b)
+        r1 = int(hash[:2], 16)
+        g1 = int(hash[2:4], 16)
+        b1 = int(hash[4:6], 16)
+
+        r2 = int(hash[6:8], 16)
+        g2 = int(hash[8:10], 16)
+        b2 = int(hash[10:12], 16)
+        return (r1, g1, b1), (r2, g2, b2)
 
     def get_image_size_from_ori_dir(self):
         """读取 ori_pic_dir 下任意一张图片来确定图像尺寸"""
@@ -317,7 +326,7 @@ class ContinuousEvaluate():
             draw = ImageDraw.Draw(img)
 
             # 获取当前车辆颜色
-            color = self.id_to_color(vehId[i].item())
+            color, _ = self.id_to_color(vehId[i].item())
 
             # 生成预测轨迹像素坐标
             world_fut_pred = []

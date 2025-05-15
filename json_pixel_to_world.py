@@ -335,6 +335,7 @@ def main(json_dir = "roadsideCamera1-250409-111220/roadsideCamera1-250409-111220
             np.array(mat_track[vehicle_id - 1][2]) / scale, np.array(mat_track[vehicle_id - 1][1]) / scale)
 
     mat_dir = os.path.join(json_dir, CONST_MAT_NAME)
+    # os.remove(mat_dir)
     savemat(mat_dir, {"traj": mat_traj, "tracks": mat_track})
     # xx = np.array(traj_data[2][3])
     # yy = np.array(traj_data[2][4])

@@ -1,3 +1,4 @@
+import glob
 import re
 import sys
 import os
@@ -10,7 +11,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QLineEdit, QMessageBox, QCheckBox, QTextEdit, QPlainTextEdit
 )
 from PyQt6.QtGui import QPixmap, QMouseEvent, QPainter, QPen, QColor, QTextCharFormat
-from PyQt6.QtCore import Qt, QPointF, pyqtSignal, QUrl, QThread
+from PyQt6.QtCore import Qt, QPointF, pyqtSignal, QUrl, QThread, QObject
 
 import json_pixel_to_world
 from collision_detect import CollisionDetect
@@ -18,13 +19,17 @@ from collision_detect import CollisionDetect
 from datetime import datetime
 
 
-class QTextEditLogger:
+class QTextEditLogger(QObject):
+    log_signal = pyqtSignal(str, QColor)
     LEVELS = {"DEBUG": 1, "INFO": 2, "ERROR": 3}
 
     def __init__(self, text_edit: QPlainTextEdit, level: str = "DEBUG"):
+        super().__init__()
         self.text_edit = text_edit
         self.buffer = ""
         self.level = self.LEVELS.get(level.upper(), 1)  # 默认 DEBUG
+
+        self.log_signal.connect(self._append_safe)
 
     def write(self, message):
         self.buffer += message
@@ -37,7 +42,10 @@ class QTextEditLogger:
             self._append(self.buffer, QColor("black"))
             self.buffer = ""
 
-    def _append(self, line, color: QColor):
+    def _append(self, line: str, color: QColor):
+        self.log_signal.emit(line.strip(), color)  # 让主线程来处理
+
+    def _append_safe(self, line: str, color: QColor):
         if not line.strip():
             return
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -49,7 +57,6 @@ class QTextEditLogger:
         fmt.setForeground(color)
         cursor.setCharFormat(fmt)
         cursor.insertText(formatted_line + "\n")
-
         self.text_edit.setTextCursor(cursor)
 
     def _should_log(self, level_name: str) -> bool:
@@ -209,8 +216,7 @@ class MainWindow(QWidget):
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
         self.logger = QTextEditLogger(self.log_output)
-        sys.stdout = self.logger
-        sys.stderr = self.logger
+        # sys.stdout = self.logger
 
         # 参数
         self.img_width = 450
@@ -224,13 +230,20 @@ class MainWindow(QWidget):
         self.save_path_input = QLineEdit()
         self.save_pic_path_input = QLineEdit()
         self.epoch_input = QLineEdit("9")
+        self.epoch_input.setEnabled(False)
         self.draw_img_checkbox = QCheckBox("保存预测数据图像")
         self.draw_pic_checkbox = QCheckBox("保存预测原图渲染")
+        self.draw_all_pic_checkbox = QCheckBox("将所有车辆的预测轨迹保存在同一个图片中")
         self.draw_pic_checkbox.setEnabled(False)
+        self.draw_all_pic_checkbox.setEnabled(False)
         self.draw_img_checkbox.stateChanged.connect(self.update_draw_pic_checkbox_state)
+        self.draw_pic_checkbox.clicked.connect(lambda: self.on_checkbox_clicked(self.draw_pic_checkbox))
+        self.draw_all_pic_checkbox.clicked.connect(lambda: self.on_checkbox_clicked(self.draw_all_pic_checkbox))
+        self.observed_car_input = QLineEdit("1")
+        self.observed_car_input.setEnabled(False)
 
         # 用于展示图片的 QLabel
-        self.image_label = ClickableImageLabel("图像预览", self.logger)
+        self.image_label = ClickableImageLabel("图像预览\n\n在左侧选取原图目录后可在此处框出施工区域", self.logger)
         self.image_label.pointClicked.connect(self.show_coord)
         self.image_label.setFixedSize(self.img_width, self.img_height)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -243,8 +256,6 @@ class MainWindow(QWidget):
         self.video_widget.setFixedSize(self.img_width, self.img_height)
         self.media_player = QMediaPlayer()
         self.media_player.setVideoOutput(self.video_widget)
-        self.audio_output = QAudioOutput()
-        self.media_player.setAudioOutput(self.audio_output)
         self.video_widget.clicked.connect(self.toggle_video_playback)
 
         self.init_ui()
@@ -268,7 +279,12 @@ class MainWindow(QWidget):
         args_layout.addLayout(
             self.create_file_selector("保存图片路径", self.save_pic_path_input, QFileDialog.getExistingDirectory))
         args_layout.addWidget(self.draw_img_checkbox)
-        args_layout.addWidget(self.draw_pic_checkbox)
+        draw_pic_layout = QHBoxLayout()
+        draw_pic_layout.addWidget(self.draw_all_pic_checkbox)
+        draw_pic_layout.addWidget(self.draw_pic_checkbox)
+        draw_pic_layout.addWidget(QLabel("选择观察目标车辆"))
+        draw_pic_layout.addWidget(self.observed_car_input)
+        args_layout.addLayout(draw_pic_layout)
         # Epoch 输入
         epoch_layout = QHBoxLayout()
         epoch_layout.addWidget(QLabel("Epoch"))
@@ -331,8 +347,16 @@ class MainWindow(QWidget):
     def update_draw_pic_checkbox_state(self, state):
         is_checked = state == Qt.CheckState.Checked.value
         self.draw_pic_checkbox.setEnabled(is_checked)
+        self.draw_all_pic_checkbox.setEnabled(is_checked)
+        self.observed_car_input.setEnabled(is_checked)
         if not is_checked:
             self.draw_pic_checkbox.setChecked(False)
+            self.draw_all_pic_checkbox.setChecked(False)
+
+    def on_checkbox_clicked(self, clicked_checkbox):
+        for checkbox in [self.draw_pic_checkbox, self.draw_all_pic_checkbox]:
+            if checkbox != clicked_checkbox:
+                checkbox.setChecked(False)
 
     def show_coord(self, point):
         x, y = point
@@ -361,8 +385,7 @@ class MainWindow(QWidget):
         pic_dir = os.path.join(dir_path, 'output/Colorbox')
 
         mat_dir = os.path.join(dir_path, json_pixel_to_world.CONST_MAT_NAME)
-        if not os.path.exists(mat_dir):
-            json_pixel_to_world.main(dir_path)
+        json_pixel_to_world.main(dir_path)
 
         self.mat_path_input.setText(mat_dir)
         self.pic_dir_input.setText(pic_dir)
@@ -376,28 +399,30 @@ class MainWindow(QWidget):
         if y > self.img_height / self.image_label._scale_ratio_y / 2:
             self.coord_label.setText(f"悬停坐标：({x:.1f}, {y:.1f})")
         else:
-            self.coord_label.setText(f"位于图像上半部分，不可选点")
+            self.coord_label.setText(f"鼠标位于预览图像上半部分，不可选点")
 
     def show_warning(self, message):
         self.coord_label.setText(message)
 
     def sorted_image_files(self, directory):
+        if not os.path.isdir(directory):
+            return []
+
         def extract_number(filename):
             match = re.match(r"(\d+)\.(png|jpg|jpeg|bmp)", filename)
             return int(match.group(1)) if match else float('inf')
 
         supported_ext = ('.png', '.jpg', '.jpeg', '.bmp')
+
         files = [f for f in os.listdir(directory) if f.lower().endswith(supported_ext)]
         files.sort(key = extract_number)
         return [os.path.join(directory, f) for f in files]
 
     def generate_video_with_polygon(self, image_dir, points, output_video_path = "output.mp4"):
         image_files = self.sorted_image_files(image_dir)
-        if not image_files:
-            QMessageBox.warning(self, "警告", "没有图片")
-            return
-
-        polygon_pts = np.array([[int(x), int(y)] for x, y in points], np.int32).reshape((-1, 1, 2))
+        self.logger.debug("预测生成的图片: " + str(image_files))
+        if len(image_files) == 0:
+            raise FileNotFoundError("目标文件夹下没有图片，请检查车辆编号是否存在")
 
         first_img = cv2.imread(image_files[0])
         height, width, _ = first_img.shape
@@ -410,15 +435,14 @@ class MainWindow(QWidget):
             img = cv2.imread(fname)
             if img is None:
                 continue
-            if self.draw_pic_checkbox.isChecked():
+            if (self.draw_pic_checkbox.isChecked() or self.draw_all_pic_checkbox.isChecked()) and len(points) > 0:
+                polygon_pts = np.array([[int(x), int(y)] for x, y in points], np.int32).reshape((-1, 1, 2))
                 cv2.polylines(img, [polygon_pts], isClosed = True, color = (255, 255, 0), thickness = 2)
             out.write(img)
         out.release()
-
         # 设置视频播放
         self.media_player.setSource(QUrl.fromLocalFile(os.path.abspath(output_video_path)))
         self.media_player.play()
-        self.current_video_path = output_video_path  # 可选：记录当前视频路径用于重放
 
     def replay_video(self):
         if self.media_player.source().isLocalFile():
@@ -432,6 +456,10 @@ class MainWindow(QWidget):
             self.media_player.play()
 
     def call_predict(self):
+        self.logger.info("开始预测")
+        if self.observed_car_input.text() == "":
+            self.logger.error("不可将目标车辆设置为空，默认切换为1")
+            self.observed_car_input.setText("1")
         try:
             args = {
                 "data_args": {
@@ -442,7 +470,8 @@ class MainWindow(QWidget):
                 "output_args": {
                     "draw_img": self.draw_img_checkbox.isChecked(),
                     "draw_pic": self.draw_pic_checkbox.isChecked(),
-                    "draw_all_pic": False,
+                    "draw_all_pic": self.draw_all_pic_checkbox.isChecked(),
+                    "observed_car": int(self.observed_car_input.text()),
                     "save_path": self.save_path_input.text(),
                     "save_pic_path": self.save_pic_path_input.text(),
                 },
@@ -450,17 +479,51 @@ class MainWindow(QWidget):
                 "multi_model": False,
             }
 
+            self.logger.debug(str(args))
+
+            # 输入完整性判断
+            # 保存路径需要设置、监测车辆需要指明
+            if self.draw_img_checkbox.isChecked():
+                if not self.draw_pic_checkbox.isChecked() and not self.draw_all_pic_checkbox.isChecked():
+                    if self.save_path_input.text() == "":
+                        QMessageBox.warning(self, "警告", "请设置保存路径")
+                        return
+                else:
+                    if self.save_pic_path_input.text() == "":
+                        QMessageBox.warning(self, "警告", "请设置保存图片路径")
+                        return
+
+            # 清空文件
+            if self.draw_img_checkbox.isChecked():
+                save_path = os.path.join(self.save_path_input.text(), "1-" + self.observed_car_input.text())
+                if self.draw_pic_checkbox.isChecked():
+                    save_path = os.path.join(self.save_pic_path_input.text(), "1-" + self.observed_car_input.text())
+                elif self.draw_all_pic_checkbox.isChecked():
+                    save_path = self.save_pic_path_input.text()
+
+                for f in ["*.png", "*.jpg"]:
+                    files = glob.glob(os.path.join(save_path, f))
+                    for file in files:
+                        os.remove(file)
+
             detect = CollisionDetect(args)
 
             def pred_video():
                 detect.detect(self.image_label.original_points)
+                # 放视频
                 if self.draw_img_checkbox.isChecked():
-                    save_path = self.save_pic_path_input.text() if self.draw_pic_checkbox.isChecked() else self.save_path_input.text()
-                    self.generate_video_with_polygon(
-                        image_dir = os.path.join(save_path, "1-1"),
-                        points = self.image_label.get_original_points(),
-                        output_video_path = os.path.join(save_path, "output.mp4")
-                    )
+                    self.logger.info("正在生成视频")
+                    try:
+                        self.media_player.stop()
+                        self.media_player.setSource(QUrl())
+                        self.generate_video_with_polygon(
+                            image_dir = save_path,
+                            points = self.image_label.get_original_points(),
+                            output_video_path = os.path.join(save_path, "output.mp4")
+                        )
+                        self.logger.info("生成视频成功")
+                    except FileNotFoundError as err:
+                        self.logger.error(str(err))
 
             self.worker = DetectWorker(pred_video)
             self.worker.error.connect(lambda e: QMessageBox.critical(self, "错误", e))
@@ -469,7 +532,7 @@ class MainWindow(QWidget):
 
             # detect.detect(self.image_label.original_points)
 
-            # 放视频
+
 
         except Exception as e:
             QMessageBox.critical(self, "错误", str(e))
